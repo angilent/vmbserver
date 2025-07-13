@@ -1,0 +1,5 @@
+__pycache__/
+.env
+iot_data.db
+*.pyc
+static/
