@@ -1,4 +1,6 @@
-from fastapi import FastAPI, WebSocket, Depends, HTTPException
+from fastapi import FastAPI, WebSocket, Depends, HTTPException, Request
+import json
+from pydantic import ValidationError
 from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +28,15 @@ load_dotenv()
 
 # 初始化FastAPI应用
 app = FastAPI(title="IoT Data Service Platform")
+
+@app.post("/showRequest")
+async def show_request(request: Request):
+    raw_body = await request.body()
+    headers = dict(request.headers)
+    return {
+        "headers": headers,
+        "raw_request": raw_body.decode("utf-8")
+    }
 
 # 配置CORS
 app.add_middleware(
@@ -58,8 +69,29 @@ async def root():
 
 # HTTP接口 - 接收传感器数据
 @app.post("/data", response_model=SensorDataResponse)
-def create_sensor_data(data: SensorDataCreate, db: Session = Depends(get_db)):
-    db_data = SensorData(**data.dict())
+async def create_sensor_data(request: Request, db: Session = Depends(get_db)):
+    content_type = request.headers.get("Content-Type", "")
+    
+    # 处理不同Content-Type的请求
+    if "application/json" in content_type:
+        data = await request.json()
+    elif "text/plain" in content_type:
+        body = await request.body()
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON format in text/plain body")
+    else:
+        raise HTTPException(status_code=415, detail="Unsupported Media Type. Use application/json or text/plain")
+    
+    # 验证数据格式
+    try:
+        sensor_data = SensorDataCreate(** data)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
+    
+    # 保存到数据库
+    db_data = SensorData(** sensor_data.dict())
     db.add(db_data)
     db.commit()
     db.refresh(db_data)
